@@ -1,8 +1,14 @@
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 
+from identity_layer import IdentityLayer
+
 
 class ObjectServer(BaseHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.identity_layer = IdentityLayer('kriya.db')
+
     def do_GET(self):
         parsed_url = urlparse(self.path)
         query_params = parse_qs(parsed_url.query)
@@ -87,6 +93,34 @@ class ObjectServer(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-Type', 'application/octet-stream')
         self.send_header('Content-Length', str(self.storage_backend.get_object_size(object_key)))
+        self.end_headers()
+
+    def do_POST(self):
+        parsed_url = urlparse(self.path)
+        query_params = parse_qs(parsed_url.query)
+
+        # validate request according to S3 protocol
+        if 'X-Amz-Content-Sha256' not in self.headers:
+            self.send_error(400, 'Bad Request', 'Missing required header: X-Amz-Content-Sha256')
+            return
+
+        # extract object key from request
+        object_key = parsed_url.path.lstrip('/')
+
+        # extract access key and secret key from request headers
+        access_key = self.headers.get('X-Amz-Access-Key')
+        secret_key = self.headers.get('X-Amz-Secret-Key')
+
+        # verify access key and secret key using identity layer
+        if not self.identity_layer.verify_access_key(access_key, secret_key):
+            self.send_error(403, 'Forbidden', 'Invalid access key or secret key.')
+            return
+
+        # perform create operation on object
+        self.storage_backend.create_object(object_key)
+
+        # return success response to client
+        self.send_response(200)
         self.end_headers()
 
 
