@@ -1,3 +1,4 @@
+import hashlib
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -54,6 +55,12 @@ class ObjectServer(BaseHTTPRequestHandler):
         # return success response to client
         self.send_response(200)
         self.end_headers()
+
+        # hash object data using SHA-256
+        object_hash = hashlib.sha256(object_data).hexdigest()
+
+        # store hash value as metadata of object
+        self.storage_backend.write_metadata(object_key, 'hash', object_hash)
 
         # replicate object to other object servers
         self.object_server_cluster.replicate_object(object_key, object_data)
