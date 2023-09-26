@@ -2,12 +2,14 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 
 from identity_layer import IdentityLayer
+from object_server_cluster import ObjectServerCluster
 
 
 class ObjectServer(BaseHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.identity_layer = IdentityLayer('kriya.db')
+        self.object_server_cluster = ObjectServerCluster()
 
     def do_GET(self):
         parsed_url = urlparse(self.path)
@@ -53,6 +55,9 @@ class ObjectServer(BaseHTTPRequestHandler):
         self.send_response(200)
         self.end_headers()
 
+        # replicate object to other object servers
+        self.object_server_cluster.replicate_object(object_key, object_data)
+
     def do_DELETE(self):
         parsed_url = urlparse(self.path)
         query_params = parse_qs(parsed_url.query)
@@ -71,6 +76,9 @@ class ObjectServer(BaseHTTPRequestHandler):
         # return success response to client
         self.send_response(204)
         self.end_headers()
+
+        # delete object from other object servers
+        self.object_server_cluster.delete_object(object_key)
 
     def do_HEAD(self):
         parsed_url = urlparse(self.path)
@@ -122,6 +130,9 @@ class ObjectServer(BaseHTTPRequestHandler):
         # return success response to client
         self.send_response(200)
         self.end_headers()
+
+        # rebalance objects among object servers
+        self.object_server_cluster.rebalance_objects()
 
 
 def main():
