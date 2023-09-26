@@ -1,6 +1,10 @@
 import hashlib
+import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
+
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import pad
 
 from identity_layer import IdentityLayer
 from object_server_cluster import ObjectServerCluster
@@ -49,8 +53,16 @@ class ObjectServer(BaseHTTPRequestHandler):
         # read object data from request body
         object_data = self.rfile.read(int(self.headers['Content-Length']))
 
-        # perform write operation on object
+        # generate a random encryption key for each object
+        encryption_key = os.urandom(32)
+
+        # encrypt the object data using AES-256 with the encryption key
+        cipher = AES.new(encryption_key, AES.MODE_CBC)
+        object_data = cipher.encrypt(pad(object_data, AES.block_size))
+
+        # store the encrypted object data and the encryption key as metadata of the object
         self.storage_backend.write_object(object_key, object_data)
+        self.storage_backend.write_metadata(object_key, 'encryption_key', encryption_key)
 
         # return success response to client
         self.send_response(200)
