@@ -1,3 +1,4 @@
+import gzip
 import hashlib
 import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -59,6 +60,12 @@ class ObjectServer(BaseHTTPRequestHandler):
         # encrypt the object data using AES-256 with the encryption key
         cipher = AES.new(encryption_key, AES.MODE_CBC)
         object_data = cipher.encrypt(pad(object_data, AES.block_size))
+
+        # compress the object data using GZIP
+        compressed_object_data = gzip.compress(object_data)
+
+        # store the compressed object data as metadata of the object
+        self.storage_backend.write_metadata(object_key, 'compressed_data', compressed_object_data)
 
         # store the encrypted object data and the encryption key as metadata of the object
         self.storage_backend.write_object(object_key, object_data)
