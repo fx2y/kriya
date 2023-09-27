@@ -1,5 +1,7 @@
 import hashlib
+import http
 import sqlite3
+import time
 
 
 class S3Protocol:
@@ -15,6 +17,11 @@ class S3Protocol:
                         secret_key TEXT
                     )
                 ''')
+        self.conn.commit()
+
+        # create object_servers table if it does not exist
+        self.cursor.execute('''CREATE TABLE IF NOT EXISTS object_servers
+                                    (id INTEGER PRIMARY KEY, ip TEXT, port INTEGER, last_heartbeat INTEGER)''')
         self.conn.commit()
 
         self.allowed_content_types = ['application/octet-stream', 'binary/octet-stream',
@@ -75,3 +82,89 @@ class S3Protocol:
             return True
         else:
             return False
+
+    def exchange_heartbeat(self, ip, port):
+        # update last heartbeat for the object server
+        self.cursor.execute('''UPDATE object_servers SET last_heartbeat = ? WHERE ip = ? AND port = ?''',
+                            (int(time.time()), ip, port))
+        self.conn.commit()
+
+        # get all object servers except the current one
+        self.cursor.execute('''SELECT ip, port FROM object_servers WHERE ip != ? AND port != ?''', (ip, port))
+        object_servers = self.cursor.fetchall()
+
+        # send heartbeat to all other object servers
+        for object_server in object_servers:
+            try:
+                conn = http.client.HTTPConnection(object_server[0], object_server[1])
+                conn.request('GET', '/heartbeat')
+                response = conn.getresponse()
+                if response.status != 200:
+                    # handle error
+                    pass
+                conn.close()
+            except:
+                # handle error
+                pass
+
+    def replicate_objects(self, object_id, data):
+        # get all object servers except the current one
+        self.cursor.execute('''SELECT ip, port FROM object_servers WHERE id != ?''', (object_id,))
+        object_servers = self.cursor.fetchall()
+
+        # replicate object to all other object servers
+        for object_server in object_servers:
+            try:
+                conn = http.client.HTTPConnection(object_server[0], object_server[1])
+                conn.request('PUT', '/objects/' + str(object_id), data)
+                response = conn.getresponse()
+                if response.status != 200:
+                    # handle error
+                    pass
+                conn.close()
+            except:
+                # handle error
+                pass
+
+    def rebalance_objects(self):
+        # get all object servers and their object counts
+        self.cursor.execute('''SELECT id, ip, port, COUNT(*) FROM object_servers
+                            JOIN objects ON object_servers.id = objects.object_server_id
+                            GROUP BY object_servers.id''')
+        object_servers = self.cursor.fetchall()
+
+        # calculate average object count per object server
+        total_objects = sum([object_server[3] for object_server in object_servers])
+        avg_objects = total_objects // len(object_servers)
+
+        # rebalance objects among object servers
+        for i in range(len(object_servers)):
+            object_server = object_servers[i]
+            if object_server[3] > avg_objects:
+                # move objects to other object servers
+                for j in range(i + 1, len(object_servers)):
+                    other_object_server = object_servers[j]
+                    if other_object_server[3] < avg_objects:
+                        # move objects to other object server
+                        self.cursor.execute('''UPDATE objects SET object_server_id = ? WHERE object_server_id = ?
+                                            LIMIT ?''',
+                                            (other_object_server[0], object_server[0], object_server[3] - avg_objects))
+                        self.conn.commit()
+                        break
+
+    def add_object_server(self, ip, port):
+        # add object server to the database
+        self.cursor.execute('''INSERT INTO object_servers (ip, port, last_heartbeat) VALUES (?, ?, ?)''',
+                            (ip, port, int(time.time())))
+        self.conn.commit()
+
+    def remove_object_server(self, ip, port):
+        # remove object server from the database
+        self.cursor.execute('''DELETE FROM object_servers WHERE ip = ? AND port = ?''', (ip, port))
+        self.conn.commit()
+
+    def get_object_servers(self):
+        # get all object servers from the database
+        self.cursor.execute('''SELECT ip, port FROM object_servers''')
+        object_servers = self.cursor.fetchall()
+        return object_servers
