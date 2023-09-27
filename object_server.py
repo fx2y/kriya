@@ -1,11 +1,12 @@
 import gzip
 import hashlib
 import os
+import zlib
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 
 from Crypto.Cipher import AES
-from Crypto.Util.Padding import pad
+from Crypto.Util.Padding import pad, unpad
 
 from identity_layer import IdentityLayer
 from object_server_cluster import ObjectServerCluster
@@ -31,6 +32,22 @@ class ObjectServer(BaseHTTPRequestHandler):
 
         # perform read operation on object
         object_data = self.storage_backend.read_object(object_key)
+
+        # decrypt the object data using AES-256 with the encryption key
+        encryption_key = self.storage_backend.read_metadata(object_key, 'encryption_key')
+        cipher = AES.new(encryption_key, AES.MODE_CBC)
+        object_data = unpad(cipher.decrypt(object_data), AES.block_size)
+
+        # decompress the object data using GZIP
+        compressed_object_data = self.storage_backend.read_metadata(object_key, 'compressed_data')
+        object_data = gzip.decompress(compressed_object_data)
+
+        # verify the checksum of the object data using CRC32
+        checksum = zlib.crc32(object_data)
+        stored_checksum = self.storage_backend.read_metadata(object_key, 'checksum')
+        if checksum != stored_checksum:
+            self.send_error(500, 'Internal Server Error', 'Checksum verification failed.')
+            return
 
         # return object data to client
         self.send_response(200)
@@ -70,6 +87,12 @@ class ObjectServer(BaseHTTPRequestHandler):
         # store the encrypted object data and the encryption key as metadata of the object
         self.storage_backend.write_object(object_key, object_data)
         self.storage_backend.write_metadata(object_key, 'encryption_key', encryption_key)
+
+        # compute the checksum of the object data using CRC32
+        checksum = zlib.crc32(object_data)
+
+        # store the checksum as metadata of the object
+        self.storage_backend.write_metadata(object_key, 'checksum', checksum)
 
         # return success response to client
         self.send_response(200)
