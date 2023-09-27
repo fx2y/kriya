@@ -1,12 +1,23 @@
 import http.server
 
+from identity_layer import IdentityLayer
 from storage_layer import StorageLayer
 
 
 class ObjectServer(http.server.BaseHTTPRequestHandler):
     storage_layer = StorageLayer()
+    identity_layer = IdentityLayer()
 
     def do_GET(self):
+        # Extract the access key and secret key from the request headers.
+        access_key = self.headers.get('x-amz-access-key')
+        secret_key = self.headers.get('x-amz-secret-key')
+
+        # Verify the access key and secret key using the identity layer.
+        if not self.identity_layer.verify_credentials(access_key, secret_key):
+            self.send_error(401, 'Unauthorized')
+            return
+
         # Extract the HTTP method, headers, and body from the request.
         method = self.command
         headers = self.headers
@@ -30,6 +41,14 @@ class ObjectServer(http.server.BaseHTTPRequestHandler):
         self.wfile.write(object_data)
 
     def do_PUT(self):
+        # Extract the access key and secret key from the request headers.
+        access_key = self.headers.get('x-amz-access-key')
+        secret_key = self.headers.get('x-amz-secret-key')
+
+        # Verify the access key and secret key using the identity layer.
+        if not self.identity_layer.verify_credentials(access_key, secret_key):
+            self.send_error(401, 'Unauthorized')
+            return
         # Extract the HTTP method, headers, and body from the request.
         method = self.command
         headers = self.headers
